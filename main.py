@@ -7,8 +7,7 @@ import seaborn as sns
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-WEB_ROOT = PROJECT_ROOT.parent / "Website"
-PLOTS_DIR = WEB_ROOT / "plots"
+PLOTS_DIR = PROJECT_ROOT / "plots"
 
 DATA_PATH = Path(r"c:\Users\arkan\Downloads\table__82883ENG.csv")
 OECD_PATH = PROJECT_ROOT / "oecd_indicators.csv"
@@ -19,7 +18,8 @@ def ensure_plots_dir() -> None:
 
 
 def load_water_use_data(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path, na_values=".", decimal=",")
+    # Treat "." as missing and "," as thousands separator (values like "1,235.6")
+    df = pd.read_csv(path, na_values=".", thousands=",")
 
     df.columns = (
         df.columns.str.strip()
@@ -28,11 +28,11 @@ def load_water_use_data(path: Path) -> pd.DataFrame:
         .str.replace(r"[()]", "", regex=True)
     )
 
-    df["year"] = df["periods"].str.extract(r"(\d{4})").astype("int64")
+    year_series = df["periods"].astype(str).str.extract(r"(\d{4})")[0]
+    df["year"] = pd.to_numeric(year_series, errors="coerce")
+    df = df[df["year"].notna()].copy()
+    df["year"] = df["year"].astype("int64")
     df["sector"] = df["waterusers"]
-
-    numeric_cols = df.select_dtypes(include="number").columns
-    df[numeric_cols] = df[numeric_cols].astype(float)
 
     col_tap_total = [c for c in df.columns if "tap_water_total_use_of_tap_water" in c][0]
     col_ground_total = [
@@ -41,6 +41,10 @@ def load_water_use_data(path: Path) -> pd.DataFrame:
     col_surface_total = [
         c for c in df.columns if "surface_water_total_use_of_surface_water" in c
     ][0]
+
+    # Ensure the three main water-use columns are numeric
+    for col in (col_tap_total, col_ground_total, col_surface_total):
+        df[col] = pd.to_numeric(df[col], errors="coerce")
 
     df["total_abstracted_mln_m3"] = df[
         [col_tap_total, col_ground_total, col_surface_total]
