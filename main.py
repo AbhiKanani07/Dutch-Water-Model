@@ -136,6 +136,93 @@ def plot_trends(df: pd.DataFrame) -> None:
     plt.close()
 
 
+def forecast_total_economy(df: pd.DataFrame, horizon_years: int = 5) -> pd.DataFrame:
+    """Simple linear-trend forecast for the Total Dutch economy by source."""
+    total_economy = df[df["sector"] == "Total Dutch economy"].copy()
+    cols_trend = [
+        c
+        for c in df.columns
+        if any(
+            key in c
+            for key in [
+                "tap_water_total_use_of_tap_water",
+                "groundwater_total_use_of_groundwater",
+                "surface_water_total_use_of_surface_water",
+            ]
+        )
+    ]
+
+    last_year = int(total_economy["year"].max())
+    future_years = np.arange(last_year + 1, last_year + horizon_years + 1)
+
+    records: list[dict] = []
+    for col in cols_trend:
+        valid = total_economy[["year", col]].dropna()
+        if len(valid) < 2:
+            continue
+        slope, intercept = np.polyfit(valid["year"], valid[col], 1)
+        preds = slope * future_years + intercept
+        for year, pred in zip(future_years, preds, strict=False):
+            records.append(
+                {
+                    "year": int(year),
+                    "source": col,
+                    "predicted_mln_m3": float(pred),
+                }
+            )
+
+    return pd.DataFrame.from_records(records)
+
+
+def plot_forecast_total_economy(df: pd.DataFrame, forecast_df: pd.DataFrame) -> None:
+    ensure_plots_dir()
+    total_economy = df[df["sector"] == "Total Dutch economy"].copy()
+
+    cols_trend = [
+        c
+        for c in df.columns
+        if any(
+            key in c
+            for key in [
+                "tap_water_total_use_of_tap_water",
+                "groundwater_total_use_of_groundwater",
+                "surface_water_total_use_of_surface_water",
+            ]
+        )
+    ]
+
+    sns.set(style="whitegrid")
+    plt.figure(figsize=(10, 5))
+
+    for col in cols_trend:
+        plt.plot(
+            total_economy["year"],
+            total_economy[col],
+            marker="o",
+            label=f"{col} (actual)",
+        )
+
+        subset = forecast_df[forecast_df["source"] == col]
+        if not subset.empty:
+            plt.plot(
+                subset["year"],
+                subset["predicted_mln_m3"],
+                linestyle="--",
+                marker="o",
+                label=f"{col} (forecast)",
+            )
+
+    plt.title("Water use by source - Forecast (Total Dutch economy)")
+    plt.xlabel("Year")
+    plt.ylabel("Volume (million m3)")
+    plt.legend()
+    plt.tight_layout()
+    output_path = PLOTS_DIR / "forecast_total_economy.png"
+    plt.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close()
+    print("Saved forecast plot to", output_path)
+
+
 def plot_households_vs_activities(df: pd.DataFrame) -> None:
     ensure_plots_dir()
     sectors_of_interest = ["Private households", "A-U All economic activities"]
@@ -226,12 +313,37 @@ def download_csv(url: str, out_path: Path) -> Path:
     return out_path
 
 
+def prompt_horizon(default: int = 5) -> int:
+    try:
+        raw = input(f"How many years ahead to forecast? [default {default}]: ").strip()
+        if not raw:
+            return default
+        val = int(raw)
+        if val <= 0:
+            return default
+        return min(val, 50)
+    except Exception:
+        return default
+
+
 def main() -> None:
     df = load_water_use_data(DATA_PATH)
     basic_eda(df)
     plot_trends(df)
     plot_households_vs_activities(df)
     plot_fresh_vs_salt_surface(df)
+
+    horizon = prompt_horizon()
+    forecast_df = forecast_total_economy(df, horizon_years=horizon)
+    if not forecast_df.empty:
+        ensure_plots_dir()
+        forecast_csv = PLOTS_DIR / "forecast_total_economy.csv"
+        forecast_df.to_csv(forecast_csv, index=False)
+        print(f"\nForecast saved to {forecast_csv}")
+        print(forecast_df.head())
+        plot_forecast_total_economy(df, forecast_df)
+    else:
+        print("\nNot enough data to build a forecast.")
 
     if OECD_PATH.exists():
         print("\nOECD file found, merging on year")
